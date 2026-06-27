@@ -14,12 +14,10 @@ static int32_t s_page_index = 0;
 static int32_t s_total_pages = 0;
 static bool s_loading = false;
 
-enum {
-  MSG_CMD = 0,
-  MSG_PAGE_INDEX = 1,
-  MSG_TOTAL_PAGES = 2,
-  MSG_TEXT = 3,
-};
+#define MSG_CMD MESSAGE_KEY_CMD
+#define MSG_PAGE_INDEX MESSAGE_KEY_PAGE_INDEX
+#define MSG_TOTAL_PAGES MESSAGE_KEY_TOTAL_PAGES
+#define MSG_TEXT MESSAGE_KEY_TEXT
 
 enum {
   CMD_READY = 1,
