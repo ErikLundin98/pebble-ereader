@@ -1,12 +1,12 @@
 {
   "name": "ereader",
-  "author": "MakeAwesomeHappen",
+  "author": "Erik Lundin",
   "version": "1.0.0",
-  "keywords": ["pebble-app"],
+  "keywords": ["pebble-app", "ereader", "epub", "reader"],
   "private": true,
   "dependencies": {},
   "pebble": {
-    "displayName": "ereader",
+    "displayName": "Pebble eReader",
     "uuid": "ea567b62-e595-4801-98c0-e6413f809a30",
     "sdkVersion": "3",
     "enableMultiJS": true,
@@ -41,7 +41,14 @@
       "configurable"
     ],
     "resources": {
-      "media": []
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        }
+      ]
     }
   }
 }
