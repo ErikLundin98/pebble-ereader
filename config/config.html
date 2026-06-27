@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pebble eReader — Upload EPUB</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 16px; color: #222; }
+  h1 { font-size: 20px; }
+  .row { margin: 12px 0; }
+  button { font-size: 16px; padding: 10px 16px; border-radius: 8px; border: 0; background: #ff4500; color: #fff; }
+  button:disabled { background: #999; }
+  #status { white-space: pre-wrap; font-size: 14px; color: #555; }
+  .meta { font-size: 14px; color: #333; }
+  input[type=range] { width: 100%; }
+  label { font-size: 14px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+</head>
+<body>
+<h1>Pebble eReader</h1>
+
+<div class="row">
+  <input type="file" id="file" accept=".epub" />
+</div>
+
+<div class="row">
+  <label>Characters per page: <span id="cpsVal">300</span></label>
+  <input type="range" id="cps" min="120" max="600" step="20" value="300" />
+</div>
+
+<div class="row meta" id="meta"></div>
+<div class="row" id="status"></div>
+
+<div class="row">
+  <button id="save" disabled>Save to watch</button>
+  <button id="cancel" style="background:#666">Cancel</button>
+</div>
+
+<script>
+var pages = null;
+var title = '';
+
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+function paginate(text, perPage) {
+  text = text.replace(/\s+/g, ' ').trim();
+  var out = [];
+  var i = 0;
+  while (i < text.length) {
+    var end = Math.min(i + perPage, text.length);
+    if (end < text.length) {
+      var sp = text.lastIndexOf(' ', end);
+      if (sp > i + perPage * 0.6) end = sp;
+    }
+    out.push(text.slice(i, end).trim());
+    i = end;
+  }
+  return out;
+}
+
+async function extractText(book) {
+  await book.ready;
+  var spine = book.spine;
+  var chunks = [];
+  var items = spine && spine.items ? spine.items : [];
+  for (var k = 0; k < items.length; k++) {
+    var it = items[k];
+    try {
+      var doc = await book.load(it.href);
+      var txt = doc && doc.body ? doc.body.textContent : '';
+      if (txt) chunks.push(txt);
+    } catch (e) { /* skip */ }
+  }
+  return chunks.join('\n\n');
+}
+
+document.getElementById('cps').addEventListener('input', function (e) {
+  document.getElementById('cpsVal').textContent = e.target.value;
+  if (pages && pages.lastText) {
+    pages = paginate(pages.lastText, parseInt(e.target.value, 10));
+    pages.lastText = pages.lastText;
+    document.getElementById('meta').textContent = title + ' — ' + pages.length + ' pages';
+  }
+});
+
+document.getElementById('file').addEventListener('change', async function (e) {
+  var f = e.target.files[0];
+  if (!f) return;
+  setStatus('Reading file...');
+  document.getElementById('save').disabled = true;
+  try {
+    var buf = await f.arrayBuffer();
+    var book = ePub(buf);
+    setStatus('Parsing EPUB...');
+    var meta = await book.loaded.metadata;
+    title = (meta && meta.title) || f.name.replace(/\.epub$/i, '');
+    setStatus('Extracting text...');
+    var fullText = await extractText(book);
+    fullText = fullText.replace(/\s+/g, ' ').trim();
+    var perPage = parseInt(document.getElementById('cps').value, 10);
+    pages = paginate(fullText, perPage);
+    pages.lastText = fullText;
+    document.getElementById('meta').textContent = title + ' — ' + pages.length + ' pages';
+    setStatus('Ready. Press Save to send to your watch.');
+    document.getElementById('save').disabled = false;
+  } catch (err) {
+    console.error(err);
+    setStatus('Failed to parse EPUB: ' + err.message);
+  }
+});
+
+function closeWith(payload) {
+  var encoded = encodeURIComponent(JSON.stringify(payload));
+  // Newer Pebble apps use pebblejs://close#, older iOS app also accepts.
+  document.location = 'pebblejs://close#' + encoded;
+}
+
+document.getElementById('save').addEventListener('click', function () {
+  if (!pages || !pages.length) return;
+  // Strip the helper property before sending.
+  var clean = pages.slice(0);
+  closeWith({ title: title, pages: clean });
+});
+
+document.getElementById('cancel').addEventListener('click', function () {
+  document.location = 'pebblejs://close';
+});
+</script>
+</body>
+</html>

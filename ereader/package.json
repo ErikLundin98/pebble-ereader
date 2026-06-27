@@ -1,0 +1,38 @@
+{
+  "name": "ereader",
+  "author": "MakeAwesomeHappen",
+  "version": "1.0.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "ereader",
+    "uuid": "ea567b62-e595-4801-98c0-e6413f809a30",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "aplite",
+      "basalt",
+      "chalk",
+      "diorite",
+      "emery",
+      "flint",
+      "gabbro"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "CMD",
+      "PAGE_INDEX",
+      "TOTAL_PAGES",
+      "TEXT"
+    ],
+    "capabilities": [
+      "configurable"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}
