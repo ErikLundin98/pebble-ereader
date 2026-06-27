@@ -1,7 +1,7 @@
 {
   "name": "ereader",
   "author": "Erik Lundin",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "keywords": ["pebble-app", "ereader", "epub", "reader"],
   "private": true,
   "dependencies": {},
