@@ -55,6 +55,7 @@
 </div>
 
 <div class="row meta" id="meta"></div>
+<div class="row meta" id="preview" style="white-space:pre-wrap;background:#f4f4f4;padding:8px;border-radius:6px;font-family:monospace;font-size:12px;max-height:240px;overflow:auto;"></div>
 <div class="row" id="status"></div>
 
 <div class="row">
@@ -266,6 +267,21 @@ function repaginate() {
   document.getElementById('meta').textContent =
       bookTitle + (bookAuthor ? ' — ' + bookAuthor : '') +
       ' · ' + pages.length + ' pages · ' + chapters.length + ' chapters';
+
+  // Diagnostic: render the first ~3 pages' raw content so we can see if
+  // pagination produced anything.
+  var preview = '';
+  for (var pi = 0; pi < Math.min(3, pages.length); pi++) {
+    preview += '--- Page ' + (pi + 1) +
+               (pages[pi].heading ? ' [' + pages[pi].heading + ']' : '') +
+               ' (len=' + (pages[pi].text || '').length + ') ---\n';
+    preview += (pages[pi].text || '(empty)') + '\n\n';
+  }
+  preview += 'First block: ' + (blocks[0] ?
+      ('kind=' + blocks[0].kind + ' textLen=' + blocks[0].text.length +
+       ' preview=' + JSON.stringify(blocks[0].text.slice(0, 80))) : '(none)');
+  preview += '\nBlocks total: ' + blocks.length;
+  document.getElementById('preview').textContent = preview;
 }
 
 document.addEventListener('DOMContentLoaded', function () {
