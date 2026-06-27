@@ -50,13 +50,14 @@
 </div>
 
 <script>
-// Approximate watch text-area metrics (basalt 144x168, status bar 16px).
-// charsPerLine and lines are conservative so wrap on the watch matches.
+// Approximate watch text-area metrics. Tuned for the larger 200x228 screen
+// (Core / Emery / Gabbro). On smaller 144x168 screens (Basalt/Aplite/Chalk)
+// pages will overflow and the watch's ScrollLayer will let you scroll.
 var FONTS = {
-  G14: { charsPerLine: 22, lines: 8 },
-  G18: { charsPerLine: 18, lines: 6 },
-  G24: { charsPerLine: 12, lines: 4 },
-  G28: { charsPerLine: 10, lines: 3 },
+  G14: { charsPerLine: 30, lines: 13 },
+  G18: { charsPerLine: 22, lines: 9 },
+  G24: { charsPerLine: 16, lines: 7 },
+  G28: { charsPerLine: 13, lines: 6 },
 };
 
 var fullText = '';
