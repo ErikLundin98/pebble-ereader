@@ -1,6 +1,6 @@
 #include <pebble.h>
 
-#define PAGE_TEXT_MAX 1024
+#define PAGE_TEXT_MAX 1536
 #define PERSIST_KEY_PAGE 1
 #define PERSIST_KEY_TOTAL 2
 
@@ -18,6 +18,9 @@ static bool s_loading = false;
 #define MSG_PAGE_INDEX MESSAGE_KEY_PAGE_INDEX
 #define MSG_TOTAL_PAGES MESSAGE_KEY_TOTAL_PAGES
 #define MSG_TEXT MESSAGE_KEY_TEXT
+#define MSG_FONT MESSAGE_KEY_FONT
+
+#define PAGE_STEP 10
 
 enum {
   CMD_READY = 1,
@@ -29,6 +32,19 @@ enum {
 
 static void update_status(const char *msg) {
   text_layer_set_text(s_status_layer, msg);
+}
+
+static const char *resolve_font(const char *id) {
+  if (!id || !id[0]) return FONT_KEY_GOTHIC_18;
+  if (strcmp(id, "G14") == 0) return FONT_KEY_GOTHIC_14;
+  if (strcmp(id, "G18") == 0) return FONT_KEY_GOTHIC_18;
+  if (strcmp(id, "G24") == 0) return FONT_KEY_GOTHIC_24_BOLD;
+  if (strcmp(id, "G28") == 0) return FONT_KEY_GOTHIC_28;
+  return FONT_KEY_GOTHIC_18;
+}
+
+static void apply_font(const char *id) {
+  text_layer_set_font(s_text_layer, fonts_get_system_font(resolve_font(id)));
 }
 
 static void render_page(void) {
@@ -87,8 +103,10 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     Tuple *idx = dict_find(iter, MSG_PAGE_INDEX);
     Tuple *total = dict_find(iter, MSG_TOTAL_PAGES);
     Tuple *text = dict_find(iter, MSG_TEXT);
+    Tuple *font = dict_find(iter, MSG_FONT);
     if (idx) s_page_index = idx->value->int32;
     if (total) s_total_pages = total->value->int32;
+    if (font) apply_font(font->value->cstring);
     if (text) {
       strncpy(s_page_text, text->value->cstring, PAGE_TEXT_MAX - 1);
       s_page_text[PAGE_TEXT_MAX - 1] = 0;
@@ -112,12 +130,16 @@ static void outbox_failed_handler(DictionaryIterator *iter, AppMessageResult rea
   update_status("Send fail");
 }
 
-static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
-  request_page(s_page_index - 1);
+static void up_multi_handler(ClickRecognizerRef recognizer, void *context) {
+  uint8_t n = click_number_of_clicks_counted(recognizer);
+  int32_t step = (n >= 2) ? PAGE_STEP : 1;
+  request_page(s_page_index - step);
 }
 
-static void down_click_handler(ClickRecognizerRef recognizer, void *context) {
-  request_page(s_page_index + 1);
+static void down_multi_handler(ClickRecognizerRef recognizer, void *context) {
+  uint8_t n = click_number_of_clicks_counted(recognizer);
+  int32_t step = (n >= 2) ? PAGE_STEP : 1;
+  request_page(s_page_index + step);
 }
 
 static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -131,8 +153,8 @@ static void select_long_click_handler(ClickRecognizerRef recognizer, void *conte
 }
 
 static void click_config_provider(void *context) {
-  window_single_click_subscribe(BUTTON_ID_UP, up_click_handler);
-  window_single_click_subscribe(BUTTON_ID_DOWN, down_click_handler);
+  window_multi_click_subscribe(BUTTON_ID_UP, 1, 2, 250, true, up_multi_handler);
+  window_multi_click_subscribe(BUTTON_ID_DOWN, 1, 2, 250, true, down_multi_handler);
   window_single_click_subscribe(BUTTON_ID_SELECT, select_click_handler);
   window_long_click_subscribe(BUTTON_ID_SELECT, 600, select_long_click_handler, NULL);
 }
@@ -176,7 +198,7 @@ static void init(void) {
   app_message_register_inbox_received(inbox_received_handler);
   app_message_register_inbox_dropped(inbox_dropped_handler);
   app_message_register_outbox_failed(outbox_failed_handler);
-  app_message_open(2048, 256);
+  app_message_open(3072, 256);
 
   s_window = window_create();
   window_set_window_handlers(s_window, (WindowHandlers){

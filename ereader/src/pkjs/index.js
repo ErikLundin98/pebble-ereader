@@ -27,10 +27,18 @@ function getPages() {
   try { return JSON.parse(raw); } catch (e) { return null; }
 }
 
-function setPages(pages, title) {
+function setPages(pages, title, font, startPage) {
   localStorage.setItem('ereader.pages', JSON.stringify(pages));
   localStorage.setItem('ereader.title', title || 'Untitled');
-  localStorage.setItem('ereader.cursor', '0');
+  localStorage.setItem('ereader.font', font || 'G18');
+  var s = parseInt(startPage, 10);
+  if (isNaN(s) || s < 0) s = 0;
+  if (s >= pages.length) s = pages.length - 1;
+  localStorage.setItem('ereader.cursor', String(s));
+}
+
+function getFont() {
+  return localStorage.getItem('ereader.font') || 'G18';
 }
 
 function getCursor() {
@@ -57,6 +65,7 @@ function sendPage(index) {
     PAGE_INDEX: index,
     TOTAL_PAGES: pages.length,
     TEXT: pages[index],
+    FONT: getFont(),
   }, function () {}, function (e) {
     console.log('sendAppMessage failed: ' + JSON.stringify(e));
   });
@@ -96,7 +105,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
     return;
   }
   if (data && data.pages && data.pages.length) {
-    setPages(data.pages, data.title);
-    sendPage(0);
+    setPages(data.pages, data.title, data.font, data.startPage);
+    sendPage(getCursor());
   }
 });

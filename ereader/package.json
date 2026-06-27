@@ -26,7 +26,8 @@
       "CMD",
       "PAGE_INDEX",
       "TOTAL_PAGES",
-      "TEXT"
+      "TEXT",
+      "FONT"
     ],
     "capabilities": [
       "configurable"
