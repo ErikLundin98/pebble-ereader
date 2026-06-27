@@ -81,6 +81,11 @@ function sendPage(index) {
   };
   if (page.heading) msg.HEADING = page.heading;
 
+  console.log('sendPage idx=' + index +
+              ' text.len=' + (msg.TEXT ? msg.TEXT.length : 0) +
+              ' heading=' + (msg.HEADING || '(none)') +
+              ' preview=' + JSON.stringify((msg.TEXT || '').slice(0, 60)));
+
   Pebble.sendAppMessage(msg, function () {}, function (e) {
     console.log('sendAppMessage(page) failed: ' + JSON.stringify(e));
   });

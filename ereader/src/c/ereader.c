@@ -246,6 +246,10 @@ static void handle_page_data(DictionaryIterator *iter) {
 
   t = dict_find(iter, MSG_TEXT);
   copy_str(s_page_text, PAGE_TEXT_MAX, t ? t->value->cstring : "");
+  APP_LOG(APP_LOG_LEVEL_INFO,
+          "PAGE_DATA idx=%ld total=%ld text_len=%u heading=%d",
+          (long)s_page_index, (long)s_total_pages,
+          (unsigned)strlen(s_page_text), (int)s_has_heading);
 
   persist_write_int(PERSIST_KEY_PAGE, s_page_index);
   persist_write_int(PERSIST_KEY_TOTAL, s_total_pages);
