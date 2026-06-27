@@ -4,12 +4,16 @@
 #define HEADING_MAX 96
 #define CHAPTER_TITLE_MAX 64
 #define BOOK_TITLE_MAX 64
-#define STATUS_MAX 64
+#define STATUS_MAX 96
 
 #define TOC_BUFFER 1600
 #define TOC_MAX_CHAPTERS 80
 
 #define PAGE_STEP 10
+
+#define CACHE_SLOTS 100
+#define PREFETCH_WINDOW 100   // how many pages ahead to prefetch
+#define PREFETCH_INTERVAL_MS 80
 
 #define PERSIST_KEY_PAGE 1
 #define PERSIST_KEY_TOTAL 2
@@ -61,6 +65,25 @@ static bool s_loading = false;
 static bool s_has_heading = false;
 static const char *s_body_font_key = FONT_KEY_GOTHIC_18;
 
+// ---- Page cache (heap-backed, LRU) ----
+typedef struct {
+  bool valid;
+  uint32_t used_at;
+  int32_t page_index;
+  int32_t chapter_index;
+  int32_t progress_pct;
+  char *heading;   // NULL if no heading
+  char *text;      // never NULL when valid
+} CacheEntry;
+
+static CacheEntry s_cache[CACHE_SLOTS];
+static uint32_t s_cache_counter = 0;
+static bool s_offline = false;
+
+// Background prefetcher state.
+static AppTimer *s_prefetch_timer = NULL;
+static int32_t s_inflight_request = -1;  // page index waiting for response, -1 if none
+
 // ---- TOC window ----
 static Window *s_toc_window;
 static MenuLayer *s_toc_menu;
@@ -106,6 +129,86 @@ static void copy_str(char *dst, size_t cap, const char *src) {
   dst[cap - 1] = 0;
 }
 
+static void render_page(void);
+
+static int cache_find(int32_t page_index) {
+  for (int i = 0; i < CACHE_SLOTS; i++) {
+    if (s_cache[i].valid && s_cache[i].page_index == page_index) return i;
+  }
+  return -1;
+}
+
+static int cache_lru_slot(void) {
+  int oldest = 0;
+  for (int i = 1; i < CACHE_SLOTS; i++) {
+    if (!s_cache[i].valid) return i;
+    if (s_cache[i].used_at < s_cache[oldest].used_at) oldest = i;
+  }
+  return oldest;
+}
+
+static void cache_free_slot(int slot) {
+  if (s_cache[slot].text) { free(s_cache[slot].text); s_cache[slot].text = NULL; }
+  if (s_cache[slot].heading) { free(s_cache[slot].heading); s_cache[slot].heading = NULL; }
+  s_cache[slot].valid = false;
+}
+
+static char *cache_dup(const char *src) {
+  if (!src) return NULL;
+  size_t n = strlen(src);
+  char *p = (char *)malloc(n + 1);
+  if (!p) return NULL;
+  memcpy(p, src, n + 1);
+  return p;
+}
+
+static void cache_put(int32_t page_index, const char *text, const char *heading,
+                      int32_t chapter_index, int32_t progress_pct) {
+  int slot = cache_find(page_index);
+  if (slot < 0) slot = cache_lru_slot();
+  cache_free_slot(slot);
+
+  // Try allocation; if OOM, free an extra LRU slot and retry once.
+  char *t = cache_dup(text ? text : "");
+  if (!t) {
+    int extra = cache_lru_slot();
+    if (extra != slot) cache_free_slot(extra);
+    t = cache_dup(text ? text : "");
+    if (!t) return;
+  }
+  char *h = (heading && heading[0]) ? cache_dup(heading) : NULL;
+
+  s_cache[slot].valid = true;
+  s_cache[slot].used_at = ++s_cache_counter;
+  s_cache[slot].page_index = page_index;
+  s_cache[slot].chapter_index = chapter_index;
+  s_cache[slot].progress_pct = progress_pct;
+  s_cache[slot].text = t;
+  s_cache[slot].heading = h;
+}
+
+static void cache_clear(void) {
+  for (int i = 0; i < CACHE_SLOTS; i++) cache_free_slot(i);
+  s_cache_counter = 0;
+}
+
+static void render_from_cache(int slot) {
+  CacheEntry *e = &s_cache[slot];
+  e->used_at = ++s_cache_counter;
+  s_page_index = e->page_index;
+  s_chapter_index = e->chapter_index;
+  s_progress_pct = e->progress_pct;
+  s_has_heading = (e->heading != NULL);
+  copy_str(s_page_text, PAGE_TEXT_MAX, e->text);
+  if (e->heading) copy_str(s_heading_text, HEADING_MAX, e->heading);
+  else s_heading_text[0] = 0;
+  persist_write_int(PERSIST_KEY_PAGE, s_page_index);
+  s_loading = false;
+  render_page();
+}
+
+static void schedule_prefetch(void);
+
 static void send_simple(int32_t cmd, int32_t arg) {
   DictionaryIterator *iter;
   if (app_message_outbox_begin(&iter) != APP_MSG_OK) return;
@@ -116,18 +219,21 @@ static void send_simple(int32_t cmd, int32_t arg) {
 }
 
 static void update_status(void) {
+  const char *suffix = s_offline ? " (offline)" : "";
   if (s_total_pages <= 0) {
     if (s_book_title[0]) {
-      snprintf(s_status_text, STATUS_MAX, "%s", s_book_title);
+      snprintf(s_status_text, STATUS_MAX, "%s%s", s_book_title, suffix);
     } else {
       snprintf(s_status_text, STATUS_MAX, "Connecting...");
     }
   } else if (s_chapter_total > 0 && s_chapter_title[0]) {
-    snprintf(s_status_text, STATUS_MAX, "Ch %ld/%ld - %ld%%",
-             (long)(s_chapter_index + 1), (long)s_chapter_total, (long)s_progress_pct);
+    snprintf(s_status_text, STATUS_MAX, "Ch %ld/%ld - %ld%%%s",
+             (long)(s_chapter_index + 1), (long)s_chapter_total,
+             (long)s_progress_pct, suffix);
   } else {
-    snprintf(s_status_text, STATUS_MAX, "%ld / %ld - %ld%%",
-             (long)(s_page_index + 1), (long)s_total_pages, (long)s_progress_pct);
+    snprintf(s_status_text, STATUS_MAX, "%ld / %ld - %ld%%%s",
+             (long)(s_page_index + 1), (long)s_total_pages,
+             (long)s_progress_pct, suffix);
   }
   text_layer_set_text(s_status_layer, s_status_text);
 }
@@ -184,15 +290,51 @@ static void render_page(void) {
 // ===========================================================================
 
 static void request_page(int32_t page_index) {
-  if (s_loading) return;
   if (s_total_pages > 0) {
     if (page_index < 0) page_index = 0;
     if (page_index >= s_total_pages) page_index = s_total_pages - 1;
     if (page_index == s_page_index) return;
   }
+  int slot = cache_find(page_index);
+  if (slot >= 0) {
+    render_from_cache(slot);
+    schedule_prefetch();
+    return;
+  }
+  if (s_loading) return;
   s_loading = true;
+  s_inflight_request = page_index;
   text_layer_set_text(s_status_layer, "Loading...");
   send_simple(CMD_REQUEST_PAGE, page_index);
+}
+
+static int32_t next_prefetch_target(void) {
+  if (s_total_pages <= 0) return -1;
+  int32_t hi = s_page_index + PREFETCH_WINDOW;
+  if (hi > s_total_pages) hi = s_total_pages;
+  for (int32_t p = s_page_index + 1; p < hi; p++) {
+    if (cache_find(p) < 0) return p;
+  }
+  return -1;
+}
+
+static void prefetch_tick(void *ctx) {
+  s_prefetch_timer = NULL;
+  if (s_loading || s_inflight_request >= 0) {
+    schedule_prefetch();
+    return;
+  }
+  int32_t target = next_prefetch_target();
+  if (target < 0) return;  // window full
+  s_inflight_request = target;
+  send_simple(CMD_REQUEST_PAGE, target);
+}
+
+static void schedule_prefetch(void) {
+  if (s_prefetch_timer) return;
+  if (s_total_pages <= 0) return;
+  if (next_prefetch_target() < 0) return;
+  s_prefetch_timer = app_timer_register(PREFETCH_INTERVAL_MS, prefetch_tick, NULL);
 }
 
 static void jump_chapter(int delta) {
@@ -218,44 +360,73 @@ static void jump_chapter(int delta) {
 static void handle_page_data(DictionaryIterator *iter) {
   Tuple *t;
 
-  t = dict_find(iter, MSG_PAGE_INDEX);   if (t) s_page_index = t->value->int32;
-  t = dict_find(iter, MSG_TOTAL_PAGES);  if (t) s_total_pages = t->value->int32;
-  t = dict_find(iter, MSG_CHAPTER_INDEX); if (t) s_chapter_index = t->value->int32;
-  t = dict_find(iter, MSG_CHAPTER_TOTAL); if (t) s_chapter_total = t->value->int32;
-  t = dict_find(iter, MSG_PROGRESS);     if (t) s_progress_pct = t->value->int32;
+  int32_t in_page = -1, in_total = -1;
+  int32_t in_chapter_index = 0, in_chapter_total = 0, in_progress = 0;
+  const char *in_text = "";
+  const char *in_heading = NULL;
+  const char *in_chapter_title = "";
+  const char *in_book_title = NULL;
+  const char *in_font = NULL;
 
-  t = dict_find(iter, MSG_CHAPTER_TITLE);
-  copy_str(s_chapter_title, CHAPTER_TITLE_MAX, t ? t->value->cstring : "");
-  t = dict_find(iter, MSG_BOOK_TITLE);
-  if (t) copy_str(s_book_title, BOOK_TITLE_MAX, t->value->cstring);
+  t = dict_find(iter, MSG_PAGE_INDEX);    if (t) in_page = t->value->int32;
+  t = dict_find(iter, MSG_TOTAL_PAGES);   if (t) in_total = t->value->int32;
+  t = dict_find(iter, MSG_CHAPTER_INDEX); if (t) in_chapter_index = t->value->int32;
+  t = dict_find(iter, MSG_CHAPTER_TOTAL); if (t) in_chapter_total = t->value->int32;
+  t = dict_find(iter, MSG_PROGRESS);      if (t) in_progress = t->value->int32;
+  t = dict_find(iter, MSG_CHAPTER_TITLE); if (t) in_chapter_title = t->value->cstring;
+  t = dict_find(iter, MSG_BOOK_TITLE);    if (t) in_book_title = t->value->cstring;
+  t = dict_find(iter, MSG_FONT);          if (t) in_font = t->value->cstring;
+  t = dict_find(iter, MSG_TEXT);          if (t) in_text = t->value->cstring;
+  t = dict_find(iter, MSG_HEADING);       if (t && t->length > 1) in_heading = t->value->cstring;
 
-  t = dict_find(iter, MSG_FONT);
-  if (t) s_body_font_key = resolve_body_font(t->value->cstring);
+  if (in_page < 0) { s_loading = false; s_inflight_request = -1; return; }
 
-  t = dict_find(iter, MSG_HEADING);
-  if (t && t->length > 1) {
-    s_has_heading = true;
-    copy_str(s_heading_text, HEADING_MAX, t->value->cstring);
-    text_layer_set_font(s_heading_layer,
-                        fonts_get_system_font(
-                            resolve_heading_font(t ? t->value->cstring : NULL)));
-  } else {
-    s_has_heading = false;
-    s_heading_text[0] = 0;
+  // New book? Reset cache before populating.
+  if (in_total > 0 && in_total != s_total_pages) {
+    cache_clear();
+    s_total_pages = in_total;
+    persist_write_int(PERSIST_KEY_TOTAL, s_total_pages);
   }
 
-  t = dict_find(iter, MSG_TEXT);
-  copy_str(s_page_text, PAGE_TEXT_MAX, t ? t->value->cstring : "");
-  APP_LOG(APP_LOG_LEVEL_INFO,
-          "PAGE_DATA idx=%ld total=%ld text_len=%u heading=%d",
-          (long)s_page_index, (long)s_total_pages,
-          (unsigned)strlen(s_page_text), (int)s_has_heading);
+  // Always cache the freshly received page.
+  cache_put(in_page, in_text, in_heading ? in_heading : "",
+            in_chapter_index, in_progress);
 
-  persist_write_int(PERSIST_KEY_PAGE, s_page_index);
-  persist_write_int(PERSIST_KEY_TOTAL, s_total_pages);
+  s_offline = false;
+  bool was_inflight = (s_inflight_request == in_page);
+  if (was_inflight) {
+    s_inflight_request = -1;
+    s_loading = false;
+  }
 
-  s_loading = false;
-  render_page();
+  // Only update the user-visible state when this response matches the page
+  // the user is currently waiting for. Prefetch responses populate the cache
+  // silently.
+  bool show_now = (in_page == s_page_index) ||
+                  (s_loading && was_inflight);
+  if (show_now) {
+    s_page_index = in_page;
+    s_chapter_index = in_chapter_index;
+    s_chapter_total = in_chapter_total;
+    s_progress_pct = in_progress;
+    copy_str(s_page_text, PAGE_TEXT_MAX, in_text);
+    copy_str(s_chapter_title, CHAPTER_TITLE_MAX, in_chapter_title);
+    if (in_book_title) copy_str(s_book_title, BOOK_TITLE_MAX, in_book_title);
+    if (in_font) s_body_font_key = resolve_body_font(in_font);
+    if (in_heading) {
+      s_has_heading = true;
+      copy_str(s_heading_text, HEADING_MAX, in_heading);
+      text_layer_set_font(s_heading_layer,
+                          fonts_get_system_font(resolve_heading_font(in_font)));
+    } else {
+      s_has_heading = false;
+      s_heading_text[0] = 0;
+    }
+    persist_write_int(PERSIST_KEY_PAGE, s_page_index);
+    render_page();
+  }
+
+  schedule_prefetch();
 }
 
 static void handle_toc_data(DictionaryIterator *iter) {
@@ -331,7 +502,11 @@ static void inbox_dropped_handler(AppMessageResult reason, void *context) {
 static void outbox_failed_handler(DictionaryIterator *iter,
                                   AppMessageResult reason, void *context) {
   s_loading = false;
-  text_layer_set_text(s_status_layer, "Send fail");
+  s_inflight_request = -1;
+  s_offline = true;
+  update_status();
+  // Stop hammering the outbox while offline; resume when next user action
+  // succeeds.
 }
 
 // ===========================================================================
@@ -496,6 +671,8 @@ static void init(void) {
 }
 
 static void deinit(void) {
+  if (s_prefetch_timer) { app_timer_cancel(s_prefetch_timer); s_prefetch_timer = NULL; }
+  cache_clear();
   if (s_toc_window) window_destroy(s_toc_window);
   window_destroy(s_window);
 }
