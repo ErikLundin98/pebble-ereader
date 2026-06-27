@@ -18,7 +18,7 @@ var CMD_NO_BOOK = 4;
 
 // Public URL hosting config.html (e.g. GitHub Pages). For local dev, host via
 // any static server and use that URL here.
-var CONFIG_URL = 'https://example.com/pebble-ereader/config.html';
+var CONFIG_URL = 'https://eriklundin98.github.io/pebble-ereader/config/config.html';
 
 function getPages() {
   var raw = localStorage.getItem('ereader.pages');
