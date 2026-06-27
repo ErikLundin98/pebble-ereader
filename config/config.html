@@ -20,7 +20,19 @@
 </head>
 <body>
 <h1>Pebble eReader</h1>
-<div class="meta" id="platform"></div>
+
+<div class="row">
+  <label for="platform">Watch model</label>
+  <select id="platform">
+    <option value="aplite">Pebble / Pebble Steel (144x168)</option>
+    <option value="basalt">Pebble Time / Time Steel (144x168)</option>
+    <option value="chalk">Pebble Time Round (180x180)</option>
+    <option value="diorite">Pebble 2 / 2 HR (144x168)</option>
+    <option value="emery">Pebble Time 2 (200x228)</option>
+    <option value="flint">Pebble Core 2 Duo (200x228)</option>
+    <option value="gabbro">Pebble Core Time 2 (200x228)</option>
+  </select>
+</div>
 
 <div class="row">
   <label for="file">EPUB file</label>
@@ -75,10 +87,10 @@ var PLATFORMS = {
     G28: { charsPerLine: 11, lines: 4 },
   },
   rect_large: {
-    G14: { charsPerLine: 34, lines: 12 },
-    G18: { charsPerLine: 26, lines: 10 },
-    G24: { charsPerLine: 19, lines: 7 },
-    G28: { charsPerLine: 16, lines: 6 },
+    G14: { charsPerLine: 38, lines: 13 },
+    G18: { charsPerLine: 30, lines: 11 },
+    G24: { charsPerLine: 22, lines: 8 },
+    G28: { charsPerLine: 18, lines: 7 },
   },
 };
 
@@ -93,10 +105,17 @@ function readParam(name) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-var PLATFORM = readParam('platform') || 'basalt';
+var PLATFORM = readParam('platform') || 'emery';
 var FONTS = PLATFORMS[platformGroup(PLATFORM)];
+
 document.addEventListener('DOMContentLoaded', function () {
-  document.getElementById('platform').textContent = 'Detected watch: ' + PLATFORM;
+  var sel = document.getElementById('platform');
+  sel.value = PLATFORM;
+  sel.addEventListener('change', function () {
+    PLATFORM = sel.value;
+    FONTS = PLATFORMS[platformGroup(PLATFORM)];
+    repaginate();
+  });
 });
 
 var fullText = '';
