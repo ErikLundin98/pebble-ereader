@@ -15,6 +15,7 @@ var CMD_READY = 1;
 var CMD_REQUEST_PAGE = 2;
 var CMD_PAGE_DATA = 3;
 var CMD_NO_BOOK = 4;
+var CMD_OPEN_CONFIG = 5;
 
 // Public URL hosting config.html (e.g. GitHub Pages). For local dev, host via
 // any static server and use that URL here.
@@ -74,6 +75,8 @@ Pebble.addEventListener('appmessage', function (e) {
     sendPage(getCursor());
   } else if (cmd === CMD_REQUEST_PAGE) {
     sendPage(payload.PAGE_INDEX || 0);
+  } else if (cmd === CMD_OPEN_CONFIG) {
+    Pebble.openURL(CONFIG_URL);
   }
 });
 
