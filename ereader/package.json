@@ -1,12 +1,12 @@
 {
   "name": "ereader",
   "author": "Erik Lundin",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "keywords": ["pebble-app", "ereader", "epub", "reader"],
   "private": true,
   "dependencies": {},
   "pebble": {
-    "displayName": "Pebble eReader",
+    "displayName": "epub reader",
     "uuid": "ea567b62-e595-4801-98c0-e6413f809a30",
     "sdkVersion": "3",
     "enableMultiJS": true,
