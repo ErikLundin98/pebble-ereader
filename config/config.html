@@ -63,34 +63,25 @@
 </div>
 
 <script>
-// Per-platform text-area metrics. The watch's TextLayer is sized to
-// (screen_w - 8) x (screen_h - 16-status), with the system Gothic fonts.
-// charsPerLine and lines are conservative-but-tight estimates so each page
-// fills most of the screen and only modestly overflows when characters are
-// wider than average.
-//
-// Platforms:
-//   aplite/basalt/diorite: 144x168 rectangular
-//   chalk:                 180x180 round (usable rect ~152x152)
-//   emery/flint/gabbro:    200x228 rectangular (Pebble Time 2, Core 2 Duo)
+// Per-platform text-area metrics for the watch's TextLayer.
 var PLATFORMS = {
   rect_small: {
-    G14: { charsPerLine: 24, lines: 9 },
-    G18: { charsPerLine: 19, lines: 7 },
-    G24: { charsPerLine: 13, lines: 5 },
-    G28: { charsPerLine: 11, lines: 4 },
+    G14: { cpl: 24, lines: 9 },
+    G18: { cpl: 19, lines: 7 },
+    G24: { cpl: 13, lines: 5 },
+    G28: { cpl: 11, lines: 4 },
   },
   chalk: {
-    G14: { charsPerLine: 24, lines: 8 },
-    G18: { charsPerLine: 19, lines: 6 },
-    G24: { charsPerLine: 13, lines: 5 },
-    G28: { charsPerLine: 11, lines: 4 },
+    G14: { cpl: 24, lines: 8 },
+    G18: { cpl: 19, lines: 6 },
+    G24: { cpl: 13, lines: 5 },
+    G28: { cpl: 11, lines: 4 },
   },
   rect_large: {
-    G14: { charsPerLine: 38, lines: 13 },
-    G18: { charsPerLine: 30, lines: 11 },
-    G24: { charsPerLine: 22, lines: 8 },
-    G28: { charsPerLine: 18, lines: 7 },
+    G14: { cpl: 38, lines: 13 },
+    G18: { cpl: 30, lines: 11 },
+    G24: { cpl: 22, lines: 8 },
+    G28: { cpl: 18, lines: 7 },
   },
 };
 
@@ -108,6 +99,179 @@ function readParam(name) {
 var PLATFORM = readParam('platform') || 'emery';
 var FONTS = PLATFORMS[platformGroup(PLATFORM)];
 
+var book = null;
+var blocks = [];           // [{ kind: 'heading'|'para', text, level? }, ...]
+var pages = null;          // [{ text, chapter, heading? }]
+var chapters = null;       // [{ title, firstPage }]
+var bookTitle = '';
+var bookAuthor = '';
+
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+// Word-wrap aware pagination. Reserves room for a heading line on the first
+// page of each chapter (heading is rendered in a bigger font on the watch,
+// so we count it as occupying ~2 body lines).
+function paginate(blocks, fontId) {
+  var f = FONTS[fontId] || FONTS.G18;
+  var cpl = f.cpl, maxLines = f.lines;
+  var headingCost = 2; // lines reserved on a chapter-start page
+
+  var out = [];
+  var pageLines = [];
+  var currentChapter = -1;
+  var pendingHeading = null;
+  var currentHeadingForPage = null;
+
+  function flush() {
+    while (pageLines.length && pageLines[pageLines.length - 1] === '') pageLines.pop();
+    if (pageLines.length || currentHeadingForPage) {
+      out.push({
+        text: pageLines.join('\n'),
+        chapter: currentChapter < 0 ? 0 : currentChapter,
+        heading: currentHeadingForPage || null,
+      });
+    }
+    pageLines = [];
+    currentHeadingForPage = null;
+  }
+
+  function effectiveMaxLines() {
+    return currentHeadingForPage ? Math.max(1, maxLines - headingCost) : maxLines;
+  }
+
+  function pushLine(line) {
+    if (pageLines.length >= effectiveMaxLines()) flush();
+    pageLines.push(line);
+  }
+
+  function wrap(text) {
+    text = text.replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    var words = text.split(' ');
+    var line = '';
+    for (var i = 0; i < words.length; i++) {
+      var word = words[i];
+      while (word.length > cpl) {
+        if (line) { pushLine(line); line = ''; }
+        pushLine(word.slice(0, cpl));
+        word = word.slice(cpl);
+      }
+      var candidate = line ? (line + ' ' + word) : word;
+      if (candidate.length <= cpl) line = candidate;
+      else { pushLine(line); line = word; }
+    }
+    if (line) pushLine(line);
+  }
+
+  for (var b = 0; b < blocks.length; b++) {
+    var blk = blocks[b];
+    if (blk.kind === 'heading') {
+      // Start a fresh page for the chapter heading.
+      flush();
+      chapters.push({ title: blk.text, firstPage: out.length });
+      currentChapter = chapters.length - 1;
+      currentHeadingForPage = blk.text;
+      // No body yet on this page.
+    } else if (blk.kind === 'para') {
+      wrap(blk.text);
+      // Paragraph break: blank line if room.
+      if (pageLines.length < effectiveMaxLines()) pageLines.push('');
+    }
+  }
+  flush();
+  return out;
+}
+
+// Walk an EPUB doc's body and emit blocks in reading order. Treats
+// h1/h2/h3 as chapter starts; p, li, blockquote, pre as paragraphs.
+// Skips empty whitespace nodes.
+function blocksFromDoc(doc) {
+  var out = [];
+  if (!doc || !doc.body) return out;
+  var nodes = doc.body.querySelectorAll(
+      'h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, div');
+  if (nodes.length === 0) {
+    var t = (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+    if (t) out.push({ kind: 'para', text: t });
+    return out;
+  }
+  for (var i = 0; i < nodes.length; i++) {
+    var n = nodes[i];
+    // Skip <div> wrappers whose descendants we already visit.
+    if (n.tagName && /^DIV$/i.test(n.tagName)) {
+      // include only leaf-ish divs (no block children)
+      if (n.querySelector('p, h1, h2, h3, h4, h5, h6, li, blockquote, pre')) continue;
+    }
+    var t = (n.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!t) continue;
+    if (/^H[1-6]$/i.test(n.tagName)) {
+      out.push({ kind: 'heading', text: t });
+    } else {
+      out.push({ kind: 'para', text: t });
+    }
+  }
+  return out;
+}
+
+async function extractBlocks(b) {
+  await b.ready;
+  var items = (b.spine && b.spine.items) ? b.spine.items : [];
+  var all = [];
+  for (var k = 0; k < items.length; k++) {
+    var it = items[k];
+    try {
+      var doc = await b.load(it.href);
+      var blks = blocksFromDoc(doc);
+      // If the spine item has a label (from the NCX/Nav), use it as a chapter
+      // heading even if the document had no <h*>.
+      var label = it.label || (it.title || null);
+      if (blks.length && blks[0].kind !== 'heading' && label) {
+        all.push({ kind: 'heading', text: label });
+      }
+      for (var j = 0; j < blks.length; j++) all.push(blks[j]);
+    } catch (e) { /* skip */ }
+  }
+  // If no headings were found at all, synthesise spine-level chapters.
+  var anyHeading = all.some(function (x) { return x.kind === 'heading'; });
+  if (!anyHeading && items.length) {
+    var rebuilt = [];
+    var seen = 0;
+    for (var m = 0; m < items.length; m++) {
+      rebuilt.push({ kind: 'heading',
+                     text: items[m].label || ('Chapter ' + (m + 1)) });
+      // Re-extract for this spine item.
+      try {
+        var docB = await b.load(items[m].href);
+        var bs = blocksFromDoc(docB);
+        for (var z = 0; z < bs.length; z++) {
+          if (bs[z].kind !== 'heading') rebuilt.push(bs[z]);
+        }
+      } catch (e) {}
+      seen++;
+    }
+    if (seen) all = rebuilt;
+  }
+  return all;
+}
+
+function repaginate() {
+  if (!blocks.length) return;
+  chapters = [];
+  var fontId = document.getElementById('font').value;
+  pages = paginate(blocks, fontId);
+  // If pagination produced no chapters (shouldn't happen, but...) seed one.
+  if (chapters.length === 0) {
+    chapters.push({ title: bookTitle || 'Book', firstPage: 0 });
+    for (var i = 0; i < pages.length; i++) pages[i].chapter = 0;
+  }
+  var startEl = document.getElementById('start');
+  startEl.max = pages.length;
+  if (parseInt(startEl.value, 10) > pages.length) startEl.value = pages.length;
+  document.getElementById('meta').textContent =
+      bookTitle + (bookAuthor ? ' — ' + bookAuthor : '') +
+      ' · ' + pages.length + ' pages · ' + chapters.length + ' chapters';
+}
+
 document.addEventListener('DOMContentLoaded', function () {
   var sel = document.getElementById('platform');
   sel.value = PLATFORM;
@@ -118,107 +282,6 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 });
 
-var fullText = '';
-var pages = null;
-var title = '';
-
-function setStatus(msg) { document.getElementById('status').textContent = msg; }
-
-// Word-wrap aware pagination. Keeps \n\n paragraph breaks. Tries to fill each
-// page with as many wrapped lines as fit for the chosen font.
-function paginate(text, fontId) {
-  var f = FONTS[fontId] || FONTS.G18;
-  var cpl = f.charsPerLine, maxLines = f.lines;
-  var paragraphs = text.split(/\n\s*\n/);
-  var out = [];
-  var pageLines = [];
-
-  function pushPage() {
-    if (pageLines.length) {
-      // Strip trailing blank lines.
-      while (pageLines.length && pageLines[pageLines.length - 1] === '') pageLines.pop();
-      out.push(pageLines.join('\n'));
-      pageLines = [];
-    }
-  }
-
-  for (var p = 0; p < paragraphs.length; p++) {
-    var para = paragraphs[p].replace(/\s+/g, ' ').trim();
-    if (!para) continue;
-    var words = para.split(' ');
-    var line = '';
-    for (var w = 0; w < words.length; w++) {
-      var word = words[w];
-      // Break monstrously long words.
-      while (word.length > cpl) {
-        if (line) {
-          if (pageLines.length >= maxLines) pushPage();
-          pageLines.push(line);
-          line = '';
-        }
-        if (pageLines.length >= maxLines) pushPage();
-        pageLines.push(word.slice(0, cpl));
-        word = word.slice(cpl);
-      }
-      var candidate = line ? (line + ' ' + word) : word;
-      if (candidate.length <= cpl) {
-        line = candidate;
-      } else {
-        if (pageLines.length >= maxLines) pushPage();
-        pageLines.push(line);
-        line = word;
-      }
-    }
-    if (line) {
-      if (pageLines.length >= maxLines) pushPage();
-      pageLines.push(line);
-    }
-    // Paragraph break: insert blank line if room, otherwise let the next
-    // paragraph start a fresh page.
-    if (pageLines.length >= maxLines) {
-      pushPage();
-    } else {
-      pageLines.push('');
-    }
-  }
-  pushPage();
-  return out;
-}
-
-async function extractText(book) {
-  await book.ready;
-  var items = (book.spine && book.spine.items) ? book.spine.items : [];
-  var blocks = [];
-  for (var k = 0; k < items.length; k++) {
-    var it = items[k];
-    try {
-      var doc = await book.load(it.href);
-      if (!doc) continue;
-      var nodes = doc.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote, pre');
-      if (nodes.length) {
-        for (var j = 0; j < nodes.length; j++) {
-          var t = (nodes[j].textContent || '').replace(/\s+/g, ' ').trim();
-          if (t) blocks.push(t);
-        }
-      } else if (doc.body) {
-        var t2 = (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
-        if (t2) blocks.push(t2);
-      }
-    } catch (e) { /* skip */ }
-  }
-  return blocks.join('\n\n');
-}
-
-function repaginate() {
-  if (!fullText) return;
-  var fontId = document.getElementById('font').value;
-  pages = paginate(fullText, fontId);
-  var startEl = document.getElementById('start');
-  startEl.max = pages.length;
-  if (parseInt(startEl.value, 10) > pages.length) startEl.value = pages.length;
-  document.getElementById('meta').textContent = title + ' — ' + pages.length + ' pages';
-}
-
 document.getElementById('font').addEventListener('change', repaginate);
 
 document.getElementById('file').addEventListener('change', async function (e) {
@@ -228,12 +291,14 @@ document.getElementById('file').addEventListener('change', async function (e) {
   document.getElementById('save').disabled = true;
   try {
     var buf = await f.arrayBuffer();
-    var book = ePub(buf);
+    book = ePub(buf);
     setStatus('Parsing EPUB...');
     var meta = await book.loaded.metadata;
-    title = (meta && meta.title) || f.name.replace(/\.epub$/i, '');
-    setStatus('Extracting text...');
-    fullText = await extractText(book);
+    bookTitle = (meta && meta.title) || f.name.replace(/\.epub$/i, '');
+    bookAuthor = (meta && meta.creator) || '';
+    setStatus('Extracting blocks...');
+    blocks = await extractBlocks(book);
+    setStatus('Paginating...');
     repaginate();
     setStatus('Ready. Press Save to send to your watch.');
     document.getElementById('save').disabled = false;
@@ -254,8 +319,10 @@ document.getElementById('save').addEventListener('click', function () {
   if (start < 1) start = 1;
   if (start > pages.length) start = pages.length;
   closeWith({
-    title: title,
+    title: bookTitle,
+    author: bookAuthor,
     pages: pages,
+    chapters: chapters,
     font: fontId,
     startPage: start - 1,
   });

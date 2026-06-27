@@ -27,7 +27,15 @@
       "PAGE_INDEX",
       "TOTAL_PAGES",
       "TEXT",
-      "FONT"
+      "FONT",
+      "HEADING",
+      "CHAPTER_INDEX",
+      "CHAPTER_TOTAL",
+      "CHAPTER_TITLE",
+      "BOOK_TITLE",
+      "PROGRESS",
+      "TOC",
+      "TOC_PAGES"
     ],
     "capabilities": [
       "configurable"
