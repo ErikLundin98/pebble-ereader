@@ -110,37 +110,30 @@ function setStatus(msg) { document.getElementById('status').textContent = msg; }
 
 // Word-wrap aware pagination. Reserves room for a heading line on the first
 // page of each chapter (heading is rendered in a bigger font on the watch,
-// so we count it as occupying ~2 body lines).
+// so we count it as occupying ~2 body lines). Returns { pages, chapters }.
 function paginate(blocks, fontId) {
   var f = FONTS[fontId] || FONTS.G18;
   var cpl = f.cpl, maxLines = f.lines;
-  var headingCost = 2; // lines reserved on a chapter-start page
+  var headingCost = 2;
 
-  var out = [];
+  var pages = [];
   var pageLines = [];
-  var currentChapter = -1;
   var pendingHeading = null;
-  var currentHeadingForPage = null;
+
+  function effMax() {
+    return pendingHeading ? Math.max(1, maxLines - headingCost) : maxLines;
+  }
 
   function flush() {
     while (pageLines.length && pageLines[pageLines.length - 1] === '') pageLines.pop();
-    if (pageLines.length || currentHeadingForPage) {
-      out.push({
-        text: pageLines.join('\n'),
-        chapter: currentChapter < 0 ? 0 : currentChapter,
-        heading: currentHeadingForPage || null,
-      });
-    }
+    if (pageLines.length === 0) return; // never emit blank pages
+    pages.push({ text: pageLines.join('\n'), heading: pendingHeading || null });
     pageLines = [];
-    currentHeadingForPage = null;
-  }
-
-  function effectiveMaxLines() {
-    return currentHeadingForPage ? Math.max(1, maxLines - headingCost) : maxLines;
+    pendingHeading = null;
   }
 
   function pushLine(line) {
-    if (pageLines.length >= effectiveMaxLines()) flush();
+    if (pageLines.length >= effMax()) flush();
     pageLines.push(line);
   }
 
@@ -166,20 +159,27 @@ function paginate(blocks, fontId) {
   for (var b = 0; b < blocks.length; b++) {
     var blk = blocks[b];
     if (blk.kind === 'heading') {
-      // Start a fresh page for the chapter heading.
       flush();
-      chapters.push({ title: blk.text, firstPage: out.length });
-      currentChapter = chapters.length - 1;
-      currentHeadingForPage = blk.text;
-      // No body yet on this page.
+      // If two headings come back-to-back with no body, the latest wins so
+      // the chapter title displayed matches the body that follows.
+      pendingHeading = blk.text;
     } else if (blk.kind === 'para') {
       wrap(blk.text);
-      // Paragraph break: blank line if room.
-      if (pageLines.length < effectiveMaxLines()) pageLines.push('');
+      if (pageLines.length < effMax()) pageLines.push('');
     }
   }
   flush();
-  return out;
+
+  // Derive chapter list from pages with headings.
+  var ch = [];
+  for (var i = 0; i < pages.length; i++) {
+    if (pages[i].heading) {
+      ch.push({ title: pages[i].heading, firstPage: i });
+    }
+    pages[i].chapter = ch.length === 0 ? 0 : ch.length - 1;
+  }
+  if (ch.length === 0) ch.push({ title: 'Book', firstPage: 0 });
+  return { pages: pages, chapters: ch };
 }
 
 // Walk an EPUB doc's body and emit blocks in reading order. Treats
@@ -256,14 +256,10 @@ async function extractBlocks(b) {
 
 function repaginate() {
   if (!blocks.length) return;
-  chapters = [];
   var fontId = document.getElementById('font').value;
-  pages = paginate(blocks, fontId);
-  // If pagination produced no chapters (shouldn't happen, but...) seed one.
-  if (chapters.length === 0) {
-    chapters.push({ title: bookTitle || 'Book', firstPage: 0 });
-    for (var i = 0; i < pages.length; i++) pages[i].chapter = 0;
-  }
+  var result = paginate(blocks, fontId);
+  pages = result.pages;
+  chapters = result.chapters;
   var startEl = document.getElementById('start');
   startEl.max = pages.length;
   if (parseInt(startEl.value, 10) > pages.length) startEl.value = pages.length;
