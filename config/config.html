@@ -20,6 +20,7 @@
 </head>
 <body>
 <h1>Pebble eReader</h1>
+<div class="meta" id="platform"></div>
 
 <div class="row">
   <label for="file">EPUB file</label>
@@ -50,15 +51,53 @@
 </div>
 
 <script>
-// Approximate watch text-area metrics. Tuned for the larger 200x228 screen
-// (Core / Emery / Gabbro). On smaller 144x168 screens (Basalt/Aplite/Chalk)
-// pages will overflow and the watch's ScrollLayer will let you scroll.
-var FONTS = {
-  G14: { charsPerLine: 30, lines: 13 },
-  G18: { charsPerLine: 22, lines: 9 },
-  G24: { charsPerLine: 16, lines: 7 },
-  G28: { charsPerLine: 13, lines: 6 },
+// Per-platform text-area metrics. The watch's TextLayer is sized to
+// (screen_w - 8) x (screen_h - 16-status), with the system Gothic fonts.
+// charsPerLine and lines are conservative-but-tight estimates so each page
+// fills most of the screen and only modestly overflows when characters are
+// wider than average.
+//
+// Platforms:
+//   aplite/basalt/diorite: 144x168 rectangular
+//   chalk:                 180x180 round (usable rect ~152x152)
+//   emery/flint/gabbro:    200x228 rectangular (Pebble Time 2, Core 2 Duo)
+var PLATFORMS = {
+  rect_small: {
+    G14: { charsPerLine: 24, lines: 9 },
+    G18: { charsPerLine: 19, lines: 7 },
+    G24: { charsPerLine: 13, lines: 5 },
+    G28: { charsPerLine: 11, lines: 4 },
+  },
+  chalk: {
+    G14: { charsPerLine: 24, lines: 8 },
+    G18: { charsPerLine: 19, lines: 6 },
+    G24: { charsPerLine: 13, lines: 5 },
+    G28: { charsPerLine: 11, lines: 4 },
+  },
+  rect_large: {
+    G14: { charsPerLine: 34, lines: 12 },
+    G18: { charsPerLine: 26, lines: 10 },
+    G24: { charsPerLine: 19, lines: 7 },
+    G28: { charsPerLine: 16, lines: 6 },
+  },
 };
+
+function platformGroup(p) {
+  if (p === 'emery' || p === 'flint' || p === 'gabbro') return 'rect_large';
+  if (p === 'chalk') return 'chalk';
+  return 'rect_small';
+}
+
+function readParam(name) {
+  var m = new RegExp('[?&]' + name + '=([^&]+)').exec(window.location.search);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+var PLATFORM = readParam('platform') || 'basalt';
+var FONTS = PLATFORMS[platformGroup(PLATFORM)];
+document.addEventListener('DOMContentLoaded', function () {
+  document.getElementById('platform').textContent = 'Detected watch: ' + PLATFORM;
+});
 
 var fullText = '';
 var pages = null;

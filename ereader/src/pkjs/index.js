@@ -82,19 +82,25 @@ Pebble.addEventListener('appmessage', function (e) {
     var pages = getPages();
     if (!pages) {
       sendNoBook();
-      Pebble.openURL(CONFIG_URL);
+      Pebble.openURL(configUrl());
       return;
     }
     sendPage(getCursor());
   } else if (cmd === CMD_REQUEST_PAGE) {
     sendPage(payload.PAGE_INDEX || 0);
   } else if (cmd === CMD_OPEN_CONFIG) {
-    Pebble.openURL(CONFIG_URL);
+    Pebble.openURL(configUrl());
   }
 });
 
+function configUrl() {
+  var info = (Pebble.getActiveWatchInfo && Pebble.getActiveWatchInfo()) || {};
+  var platform = info.platform || 'basalt';
+  return CONFIG_URL + '?platform=' + encodeURIComponent(platform);
+}
+
 Pebble.addEventListener('showConfiguration', function () {
-  Pebble.openURL(CONFIG_URL);
+  Pebble.openURL(configUrl());
 });
 
 Pebble.addEventListener('webviewclosed', function (e) {
