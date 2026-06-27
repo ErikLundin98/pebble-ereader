@@ -27,8 +27,21 @@ function lsJSON(k) {
 
 function getPages()    { return lsJSON('ereader.pages'); }
 function getChapters() { return lsJSON('ereader.chapters') || []; }
+function getHeadings() { return lsJSON('ereader.headings') || {}; }
 function getTitle()    { return lsGet('ereader.title', ''); }
 function getFont()     { return lsGet('ereader.font', 'G18'); }
+
+// Find chapter index containing the given page (binary search on firstPage).
+function chapterForPage(chapters, pageIdx) {
+  if (!chapters || !chapters.length) return 0;
+  var lo = 0, hi = chapters.length - 1, ans = 0;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    if (chapters[mid].firstPage <= pageIdx) { ans = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return ans;
+}
 function getCursor() {
   var v = parseInt(lsGet('ereader.cursor', '0'), 10);
   return isNaN(v) ? 0 : v;
@@ -38,6 +51,7 @@ function setCursor(i) { localStorage.setItem('ereader.cursor', String(i)); }
 function saveBook(data) {
   localStorage.setItem('ereader.pages', JSON.stringify(data.pages));
   localStorage.setItem('ereader.chapters', JSON.stringify(data.chapters || []));
+  localStorage.setItem('ereader.headings', JSON.stringify(data.headings || {}));
   localStorage.setItem('ereader.title', data.title || 'Untitled');
   localStorage.setItem('ereader.author', data.author || '');
   localStorage.setItem('ereader.font', data.font || 'G18');
@@ -62,24 +76,27 @@ function sendPage(index) {
   if (index >= pages.length) index = pages.length - 1;
   setCursor(index);
 
-  var page = pages[index];
+  var text = pages[index];
   var chapters = getChapters();
-  var chapter = chapters[page.chapter] || null;
+  var headings = getHeadings();
+  var chapterIdx = chapterForPage(chapters, index);
+  var chapter = chapters[chapterIdx] || null;
+  var heading = headings[index] || headings[String(index)];
   var progress = Math.round(((index + 1) / pages.length) * 100);
 
   var msg = {
     CMD: CMD_PAGE_DATA,
     PAGE_INDEX: index,
     TOTAL_PAGES: pages.length,
-    TEXT: page.text || '',
+    TEXT: typeof text === 'string' ? text : (text && text.text) || '',
     FONT: getFont(),
-    CHAPTER_INDEX: page.chapter || 0,
+    CHAPTER_INDEX: chapterIdx,
     CHAPTER_TOTAL: chapters.length,
     CHAPTER_TITLE: chapter ? chapter.title : '',
     BOOK_TITLE: getTitle(),
     PROGRESS: progress,
   };
-  if (page.heading) msg.HEADING = page.heading;
+  if (heading) msg.HEADING = heading;
 
   console.log('sendPage idx=' + index +
               ' text.len=' + (msg.TEXT ? msg.TEXT.length : 0) +

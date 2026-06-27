@@ -330,11 +330,22 @@ document.getElementById('save').addEventListener('click', function () {
   var start = parseInt(document.getElementById('start').value, 10) || 1;
   if (start < 1) start = 1;
   if (start > pages.length) start = pages.length;
+
+  // Compact payload: pages as plain strings (same as v1) plus a side-table
+  // of headings keyed by page index. Chapter index per page is derived from
+  // chapters[].firstPage at send time on PKJS.
+  var pagesFlat = new Array(pages.length);
+  var headings = {};
+  for (var i = 0; i < pages.length; i++) {
+    pagesFlat[i] = pages[i].text || '';
+    if (pages[i].heading) headings[i] = pages[i].heading;
+  }
   closeWith({
     title: bookTitle,
     author: bookAuthor,
-    pages: pages,
+    pages: pagesFlat,
     chapters: chapters,
+    headings: headings,
     font: fontId,
     startPage: start - 1,
   });
