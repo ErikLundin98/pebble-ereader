@@ -71,7 +71,11 @@ Pebble.addEventListener('appmessage', function (e) {
   var cmd = payload.CMD;
   if (cmd === CMD_READY) {
     var pages = getPages();
-    if (!pages) { sendNoBook(); return; }
+    if (!pages) {
+      sendNoBook();
+      Pebble.openURL(CONFIG_URL);
+      return;
+    }
     sendPage(getCursor());
   } else if (cmd === CMD_REQUEST_PAGE) {
     sendPage(payload.PAGE_INDEX || 0);

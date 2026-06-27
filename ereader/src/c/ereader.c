@@ -127,6 +127,7 @@ static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
 }
 
 static void select_long_click_handler(ClickRecognizerRef recognizer, void *context) {
+  APP_LOG(APP_LOG_LEVEL_INFO, "SELECT long-press -> CMD_OPEN_CONFIG");
   update_status("Open settings on phone");
   send_request(CMD_OPEN_CONFIG, 0);
 }
